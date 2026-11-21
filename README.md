@@ -14,6 +14,17 @@ Status: protocol verified only against a mock device; not yet tested on real har
 
 Native Windows: `cargo build --release`. Tests: `cargo test`.
 
+## Disclaimer
+
+Not affiliated with, endorsed by or supported by HM LAB. Provided as is, without
+warranty of any kind; use at your own risk. Writing to the device replaces its stored
+pictures and can overwrite its settings. Hardware behaviour has not been verified yet,
+so no feature should be considered supported until tested on a real unit.
+
 ## License
 
-AGPL-3.0-or-later. Device protocol derived from hm-hub (Creationsss/hm-hub).
+Copyright (C) 2026 charlesctchau. AGPL-3.0-or-later (see LICENSE).
+
+The device protocol implementation is derived from
+[hm-hub](https://github.com/Creationsss/hm-hub) by Creationsss, also AGPL-3.0-or-later.
+Anyone distributing a binary must offer the corresponding source code.

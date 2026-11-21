@@ -1,3 +1,12 @@
+// Z-NEO Manager - portable manager for the HM LAB Z-NEO 8K USB hub LCD.
+// Copyright (C) 2026 charlesctchau
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
+// This program is free software: you can redistribute it and/or modify it under
+// the terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option) any
+// later version. It is distributed WITHOUT ANY WARRANTY; see the LICENSE file.
+
 //! Pure scheduling logic for automatic picture rotation.
 
 use serde::{Deserialize, Serialize};

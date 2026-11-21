@@ -1,3 +1,16 @@
+// Z-NEO Manager - portable manager for the HM LAB Z-NEO 8K USB hub LCD.
+// Copyright (C) 2026 charlesctchau
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//
+// The device protocol (packet layout, flash layout, config block) is derived from
+// hm-hub by Creationsss (https://github.com/Creationsss/hm-hub),
+// licensed AGPL-3.0-or-later.
+//
+// This program is free software: you can redistribute it and/or modify it under
+// the terms of the GNU Affero General Public License as published by the Free
+// Software Foundation, either version 3 of the License, or (at your option) any
+// later version. It is distributed WITHOUT ANY WARRANTY; see the LICENSE file.
+
 //! Device session: handshake, config, flash upload/readback, power.
 
 use anyhow::{bail, Context, Result};
