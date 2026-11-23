@@ -14,10 +14,25 @@
 //! Image decoding and conversion to the device's RGB565 320x170 frames.
 
 use anyhow::{bail, Context, Result};
+use serde::{Deserialize, Serialize};
 use image::{DynamicImage, ImageDecoder, ImageReader, RgbaImage};
 use std::path::{Path, PathBuf};
 
 use crate::proto::{Album, DISPLAY_HEIGHT, DISPLAY_WIDTH};
+
+/// What to do when a GIF has more frames than the device can store.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum GifOverflow {
+    /// Keep the first frames and drop the rest (what the official web driver does).
+    #[default]
+    Trim,
+    /// Keep evenly spaced frames across the whole animation and slow the delay down.
+    Sample,
+}
+
+/// Hard cap so a pathological GIF cannot exhaust memory or time.
+const GIF_HARD_FRAME_CAP: usize = 5000;
 
 pub const IMAGE_EXTS: [&str; 6] = ["png", "jpg", "jpeg", "bmp", "webp", "gif"];
 
@@ -80,12 +95,17 @@ pub fn rgb565_to_rgba(data: &[u8]) -> Vec<u8> {
     out
 }
 
-/// Load an image or GIF as an album. `max_frames` bounds GIF decoding.
+/// Load an image or GIF as an album (trim mode). `max_frames` bounds GIF frames.
 pub fn load_album(path: &Path, crop: bool, max_frames: usize) -> Result<Album> {
+    load_album_ex(path, crop, max_frames, GifOverflow::Trim).map(|(a, _)| a)
+}
+
+/// Like [`load_album`]; also returns the GIF's total source frame count (1 for stills).
+pub fn load_album_ex(path: &Path, crop: bool, max_frames: usize, overflow: GifOverflow) -> Result<(Album, usize)> {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
     match ext.as_str() {
-        "gif" => load_gif(path, crop, max_frames),
-        e if IMAGE_EXTS.contains(&e) => load_static(path, crop),
+        "gif" => load_gif(path, crop, max_frames.max(1), overflow),
+        e if IMAGE_EXTS.contains(&e) => load_static(path, crop).map(|a| (a, 1)),
         _ => bail!("unsupported file type: {}", path.display()),
     }
 }
@@ -103,7 +123,42 @@ fn load_static(path: &Path, crop: bool) -> Result<Album> {
     Ok(Album { frames: vec![rgba_to_rgb565(fitted.as_raw())], delay_ms: 0 })
 }
 
-fn load_gif(path: &Path, crop: bool, max_frames: usize) -> Result<Album> {
+/// Total number of frames in a GIF (without converting any of them).
+fn count_gif_frames(path: &Path) -> Result<usize> {
+    let file = std::fs::File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
+    let mut opts = gif::DecodeOptions::new();
+    opts.set_color_output(gif::ColorOutput::Indexed);
+    let mut dec = opts.read_info(file).context("invalid GIF")?;
+    let mut n = 0usize;
+    while dec.read_next_frame().context("invalid GIF frame")?.is_some() {
+        n += 1;
+        if n > GIF_HARD_FRAME_CAP {
+            bail!("GIF has more than {GIF_HARD_FRAME_CAP} frames");
+        }
+    }
+    Ok(n)
+}
+
+/// Which source frames to keep: all, the first `limit`, or `limit` evenly spaced ones.
+pub fn select_frames(total: usize, limit: usize, overflow: GifOverflow) -> Vec<usize> {
+    if total <= limit {
+        return (0..total).collect();
+    }
+    match overflow {
+        GifOverflow::Trim => (0..limit).collect(),
+        GifOverflow::Sample => (0..limit).map(|k| k * total / limit).collect(),
+    }
+}
+
+fn load_gif(path: &Path, crop: bool, max_frames: usize, overflow: GifOverflow) -> Result<(Album, usize)> {
+    let total = count_gif_frames(path)?;
+    if total == 0 {
+        bail!("GIF has no frames");
+    }
+    let keep = select_frames(total, max_frames, overflow);
+    let last_needed = *keep.last().unwrap();
+    let mut next_keep = 0usize;
+
     let file = std::fs::File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
     let mut opts = gif::DecodeOptions::new();
     opts.set_color_output(gif::ColorOutput::RGBA);
@@ -112,15 +167,14 @@ fn load_gif(path: &Path, crop: bool, max_frames: usize) -> Result<Album> {
     let mut canvas = vec![0u8; (gw * gh * 4) as usize];
     let mut frames = Vec::new();
     let mut delay_ms = 0u16;
+    let mut index = 0usize;
 
     while let Some(frame) = dec.read_next_frame().context("invalid GIF frame")? {
-        if frames.len() >= max_frames {
-            bail!("GIF has more than {max_frames} frames (device limit)");
-        }
         if delay_ms == 0 && frame.delay > 0 {
             delay_ms = frame.delay.saturating_mul(10);
         }
         let (fx, fy, fw, fh) = (frame.left as u32, frame.top as u32, frame.width as u32, frame.height as u32);
+        // Every frame must be composited, even skipped ones, so later frames stay correct.
         for y in 0..fh {
             for x in 0..fw {
                 let (dx, dy) = (fx + x, fy + y);
@@ -134,10 +188,12 @@ fn load_gif(path: &Path, crop: bool, max_frames: usize) -> Result<Album> {
                 }
             }
         }
-        let img = RgbaImage::from_raw(gw, gh, canvas.clone()).context("bad GIF frame size")?;
-        let fitted = fit(&DynamicImage::from(img), crop);
-        frames.push(rgba_to_rgb565(fitted.as_raw()));
-
+        if keep.get(next_keep) == Some(&index) {
+            next_keep += 1;
+            let img = RgbaImage::from_raw(gw, gh, canvas.clone()).context("bad GIF frame size")?;
+            let fitted = fit(&DynamicImage::from(img), crop);
+            frames.push(rgba_to_rgb565(fitted.as_raw()));
+        }
         if frame.dispose == gif::DisposalMethod::Background {
             for y in 0..fh {
                 for x in 0..fw {
@@ -149,11 +205,20 @@ fn load_gif(path: &Path, crop: bool, max_frames: usize) -> Result<Album> {
                 }
             }
         }
+        if index >= last_needed {
+            break;
+        }
+        index += 1;
     }
     if frames.is_empty() {
         bail!("GIF has no frames");
     }
-    Ok(Album { frames, delay_ms })
+    // Sampling drops frames, so stretch the delay to keep the animation's real duration.
+    if overflow == GifOverflow::Sample && total > frames.len() && delay_ms > 0 {
+        let scaled = delay_ms as u64 * total as u64 / frames.len() as u64;
+        delay_ms = scaled.min(u16::MAX as u64) as u16;
+    }
+    Ok((Album { frames, delay_ms }, total))
 }
 
 /// Scale to 320x170: crop-to-fill or letterbox on black.
@@ -185,7 +250,7 @@ fn fit(img: &DynamicImage, crop: bool) -> RgbaImage {
 
 /// Render exactly what the device will show (first frame) as RGBA 320x170.
 pub fn preview_rgba(path: &Path, crop: bool) -> Result<Vec<u8>> {
-    let album = load_album(path, crop, 1000)?;
+    let album = load_album(path, crop, 1)?;
     Ok(rgb565_to_rgba(&album.frames[0]))
 }
 
@@ -232,5 +297,46 @@ mod tests {
         let p = dir.join("bad.jpg");
         std::fs::write(&p, b"not an image").unwrap();
         assert!(load_album(&p, true, 77).is_err());
+    }
+
+    fn write_test_gif(path: &Path, frames: usize) {
+        let file = std::fs::File::create(path).unwrap();
+        let mut enc = gif::Encoder::new(file, 8, 8, &[]).unwrap();
+        for i in 0..frames {
+            // frame i has red channel = i * 20 (distinct per frame)
+            let rgb: Vec<u8> = (0..64).flat_map(|_| [(i * 20) as u8, 0, 0]).collect();
+            let mut f = gif::Frame::from_rgb(8, 8, &rgb);
+            f.delay = 10; // 100 ms
+            enc.write_frame(&f).unwrap();
+        }
+    }
+
+    #[test]
+    fn select_frames_policies() {
+        assert_eq!(select_frames(5, 10, GifOverflow::Trim), vec![0, 1, 2, 3, 4]);
+        assert_eq!(select_frames(10, 4, GifOverflow::Trim), vec![0, 1, 2, 3]);
+        assert_eq!(select_frames(10, 4, GifOverflow::Sample), vec![0, 2, 5, 7]);
+        assert_eq!(select_frames(100, 77, GifOverflow::Sample).len(), 77);
+    }
+
+    #[test]
+    fn gif_overflow_trim_and_sample() {
+        let dir = std::env::temp_dir().join("zneo_test_gif");
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("a.gif");
+        write_test_gif(&p, 10);
+        let red = |a: &Album, i: usize| (a.frames[i][0] >> 3) as i32; // top 5 bits of R in RGB565
+        let (t, total) = load_album_ex(&p, true, 4, GifOverflow::Trim).unwrap();
+        assert_eq!((t.frames.len(), total, t.delay_ms), (4, 10, 100));
+        let (s, _) = load_album_ex(&p, true, 4, GifOverflow::Sample).unwrap();
+        assert_eq!(s.frames.len(), 4);
+        assert_eq!(s.delay_ms, 250); // 100 ms * 10 / 4
+        // sampled frames come from further into the animation than trimmed ones
+        assert!(red(&s, 3) > red(&t, 3));
+        // fits: nothing dropped
+        let (all, _) = load_album_ex(&p, true, 77, GifOverflow::Trim).unwrap();
+        assert_eq!(all.frames.len(), 10);
+        // a plain load_album() trims silently instead of failing
+        assert_eq!(load_album(&p, true, 3).unwrap().frames.len(), 3);
     }
 }

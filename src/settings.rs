@@ -16,6 +16,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
+use crate::imaging::GifOverflow;
 use crate::schedule::Order;
 
 #[derive(Debug, Clone)]
@@ -81,6 +82,7 @@ pub struct Settings {
     pub order: Order,
     pub images_per_change: u32,
     pub crop: bool,
+    pub gif_overflow: GifOverflow,
     pub change_on_launch: bool,
     pub last_upload_dir: String,
     /// Manual COM port such as "COM3"; empty = auto-detect by USB VID/PID.
@@ -99,6 +101,7 @@ impl Default for Settings {
             order: Order::Sequential,
             images_per_change: 1,
             crop: true,
+            gif_overflow: GifOverflow::Trim,
             change_on_launch: true,
             last_upload_dir: String::new(),
             port: String::new(),

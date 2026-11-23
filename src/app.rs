@@ -573,6 +573,11 @@ impl App {
             ui.selectable_value(&mut self.cfg.crop, true, t(zh, "Fill (crop)", "填滿（裁切）"));
             ui.selectable_value(&mut self.cfg.crop, false, t(zh, "Fit (black bars)", "完整顯示（黑邊）"));
         });
+        ui.horizontal(|ui| {
+            ui.label(t(zh, "GIF over the frame limit:", "GIF 超過幀數上限時："));
+            ui.selectable_value(&mut self.cfg.gif_overflow, crate::imaging::GifOverflow::Trim, t(zh, "Cut the tail", "截掉後面的幀"));
+            ui.selectable_value(&mut self.cfg.gif_overflow, crate::imaging::GifOverflow::Sample, t(zh, "Sample evenly (keeps whole loop)", "均勻抽幀（保留完整動畫）"));
+        });
         ui.checkbox(
             &mut self.cfg.change_on_launch,
             t(zh, "Change picture right when the app starts", "程式啟動時立即換一張"),
@@ -676,6 +681,11 @@ impl App {
         ui.horizontal(|ui| {
             ui.selectable_value(&mut self.upload_crop, true, t(zh, "Fill (crop)", "填滿（裁切）"));
             ui.selectable_value(&mut self.upload_crop, false, t(zh, "Fit (black bars)", "完整顯示（黑邊）"));
+        });
+        ui.horizontal(|ui| {
+            ui.label(t(zh, "GIF over the frame limit:", "GIF 超過幀數上限時："));
+            ui.selectable_value(&mut self.cfg.gif_overflow, crate::imaging::GifOverflow::Trim, t(zh, "Cut the tail", "截掉後面的幀"));
+            ui.selectable_value(&mut self.cfg.gif_overflow, crate::imaging::GifOverflow::Sample, t(zh, "Sample evenly (keeps whole loop)", "均勻抽幀（保留完整動畫）"));
         });
         self.ensure_preview();
 

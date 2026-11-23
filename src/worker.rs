@@ -258,13 +258,28 @@ impl Worker {
         }
         let max = self.max_frames_probe()?;
         // Decode everything first: an invalid file aborts before any device write.
+        let overflow = self.settings.lock().unwrap().gif_overflow;
         let mut albums = Vec::new();
+        let mut used = 0usize;
         for p in paths {
-            let a = imaging::load_album(p, crop, max)
+            let remaining = max.saturating_sub(used);
+            if remaining == 0 {
+                bail!("device storage is full ({max} frames); {} does not fit", file_name(p));
+            }
+            let (a, total) = imaging::load_album_ex(p, crop, remaining, overflow)
                 .with_context(|| format!("{}", p.display()))?;
+            if total > a.frames.len() {
+                self.log.warn(format!(
+                    "{}: {total} frames reduced to {} ({})",
+                    file_name(p),
+                    a.frames.len(),
+                    if overflow == imaging::GifOverflow::Sample { "evenly sampled" } else { "tail trimmed" }
+                ));
+            }
+            used += a.frames.len();
             albums.push(a);
         }
-        let total: usize = albums.iter().map(|a| a.frames.len()).sum();
+        let total: usize = used;
         let (port, mut dev) = (self.open)()?;
         let image = build_flash_buffer(&albums, dev.info.flash_size)?;
         self.log.info(format!("Uploading {} file(s), {total} frame(s) via {port}", paths.len()));
@@ -308,13 +323,19 @@ impl Worker {
         for idx in order {
             consumed += 1;
             let path = &files[idx];
-            match imaging::load_album(path, s.crop, max) {
-                Ok(a) if frames_used + a.frames.len() <= max => {
+            let remaining = max.saturating_sub(frames_used);
+            if remaining == 0 {
+                break;
+            }
+            match imaging::load_album_ex(path, s.crop, remaining, s.gif_overflow) {
+                Ok((a, total)) => {
+                    if total > a.frames.len() {
+                        self.log.warn(format!("{}: {total} frames reduced to {}", file_name(path), a.frames.len()));
+                    }
                     frames_used += a.frames.len();
                     names.push(file_name(path));
                     albums.push(a);
                 }
-                Ok(_) => self.log.warn(format!("Skipped {} (does not fit in remaining frames)", file_name(path))),
                 Err(e) => self.log.warn(format!("Skipped {}: {e:#}", file_name(path))),
             }
             if albums.len() >= want {
