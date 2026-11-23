@@ -1,9 +1,16 @@
 name: Release
 
-# Push a tag such as v0.1.7 to build the Windows portable zip and publish a GitHub Release.
+# Build the Windows portable zip and publish a GitHub Release, either by pushing a tag
+# such as v0.1.7 or by running this workflow manually (Actions > Release > Run workflow).
 on:
   push:
     tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag to create, e.g. v0.1.6"
+        required: true
+        default: "v0.1.6"
 
 permissions:
   contents: write
@@ -43,8 +50,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${{ github.ref_name }}" `
+          $tag = "${{ inputs.version || github.ref_name }}"
+          gh release create $tag `
             dist/ZNeo-Manager-win-x64.zip dist/SHA256SUMS.txt `
-            --title "Z-NEO Manager ${{ github.ref_name }}" `
+            --target "${{ github.sha }}" `
+            --title "Z-NEO Manager $tag" `
             --generate-notes `
             --notes "Windows x64 portable build (unsigned: SmartScreen may warn). Close any browser tab with hmlab.tech while using the app, since a COM port can only be opened by one program. AGPL-3.0-or-later; not affiliated with HM LAB."
