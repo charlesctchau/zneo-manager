@@ -41,6 +41,16 @@ impl Transport for Box<dyn serialport::SerialPort> {
     }
 }
 
+#[cfg(windows)]
+impl Transport for crate::winserial::RawPort {
+    fn set_read_timeout(&mut self, d: Duration) -> io::Result<()> {
+        self.set_timeout(d)
+    }
+    fn clear_input(&mut self) -> io::Result<()> {
+        self.purge_input()
+    }
+}
+
 impl Transport for Box<dyn Transport> {
     fn set_read_timeout(&mut self, d: Duration) -> io::Result<()> {
         (**self).set_read_timeout(d)
@@ -97,6 +107,67 @@ pub fn resolve_port(override_port: &str) -> Result<String> {
     }
 }
 
+/// Win32 raw-handle variants (Chrome-like DCB, and untouched driver defaults).
+#[cfg(windows)]
+fn diagnose_raw(path: &str) -> Vec<String> {
+    use crate::winserial::{Mode, RawPort};
+    // (label, mode, listen-only first, send handshake 3x at 300 ms)
+    let variants = [
+        ("RAW chrome-like listen-only", Mode::ChromeLike, true, false),
+        ("RAW chrome-like handshake", Mode::ChromeLike, false, false),
+        ("RAW chrome-like handshake x3", Mode::ChromeLike, false, true),
+        ("RAW driver-default handshake", Mode::DriverDefault, false, false),
+    ];
+    let mut out = Vec::new();
+    for (label, mode, listen_only, repeat) in variants {
+        let mut port = match RawPort::open(path, SERIAL_BAUD, mode, Duration::from_millis(200)) {
+            Ok(p) => p,
+            Err(e) => {
+                out.push(format!("{label}: cannot open: {e}"));
+                std::thread::sleep(Duration::from_secs(2));
+                continue;
+            }
+        };
+        std::thread::sleep(Duration::from_millis(100));
+        let mut wrote = String::from("-");
+        let mut got = Vec::new();
+        let mut buf = [0u8; 512];
+        let pkt = build_handshake();
+        let sends = if listen_only { 0 } else if repeat { 3 } else { 1 };
+        let end = Instant::now() + Duration::from_secs(3);
+        let mut sent = 0;
+        let mut next_send = Instant::now();
+        while Instant::now() < end && got.len() < 1024 {
+            if sent < sends && Instant::now() >= next_send {
+                wrote = match port.write_all(&pkt.buf).and_then(|_| port.flush()) {
+                    Ok(()) => format!("{} x 256 bytes written", sent + 1),
+                    Err(e) => format!("write failed: {e}"),
+                };
+                sent += 1;
+                next_send = Instant::now() + Duration::from_millis(300);
+            }
+            match port.read(&mut buf) {
+                Ok(0) => {}
+                Ok(n) => got.extend_from_slice(&buf[..n]),
+                Err(e) if e.kind() == io::ErrorKind::TimedOut => {}
+                Err(e) => {
+                    out.push(format!("{label}: read error: {e}"));
+                    break;
+                }
+            }
+        }
+        let valid = got.len() >= PACKET_SIZE && Packet::from_bytes(got[..PACKET_SIZE].try_into().unwrap()).is_ok();
+        out.push(format!(
+            "{label}: {wrote}; received {} bytes; valid packet: {valid}; first bytes: {}",
+            got.len(),
+            hex(&got[..got.len().min(40)])
+        ));
+        drop(port);
+        std::thread::sleep(Duration::from_millis(1200));
+    }
+    out
+}
+
 fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect::<Vec<_>>().join(" ")
 }
@@ -113,6 +184,8 @@ pub fn diagnose(path: &str) -> Vec<String> {
         (false, true, true),
     ];
     let mut out = vec![format!("Diagnostics on {path} (115200 8N1)")];
+    #[cfg(windows)]
+    out.extend(diagnose_raw(path));
     for (dtr, rts, send) in variants {
         let label = format!("DTR={} RTS={} {}", dtr as u8, rts as u8, if send { "send-handshake" } else { "listen-only" });
         let mut port = match serialport::new(path, SERIAL_BAUD).timeout(Duration::from_millis(200)).open() {
@@ -160,16 +233,24 @@ pub fn diagnose(path: &str) -> Vec<String> {
     out
 }
 
+#[cfg(windows)]
 pub fn open_serial(path: &str) -> Result<DynDevice> {
-    let port = serialport::new(path, SERIAL_BAUD)
+    let port = crate::winserial::RawPort::open(path, SERIAL_BAUD, crate::winserial::Mode::ChromeLike, NORMAL_TIMEOUT)
+        .with_context(|| format!("cannot open {path} (in use by another program?)"))?;
+    // Chrome sends the first packet ~100 ms after opening.
+    std::thread::sleep(Duration::from_millis(100));
+    Device::new(Box::new(port) as Box<dyn Transport>)
+}
+
+#[cfg(not(windows))]
+pub fn open_serial(path: &str) -> Result<DynDevice> {
+    let mut port = serialport::new(path, SERIAL_BAUD)
         .data_bits(serialport::DataBits::Eight)
         .stop_bits(serialport::StopBits::One)
         .parity(serialport::Parity::None)
         .timeout(NORMAL_TIMEOUT)
         .open()
         .with_context(|| format!("cannot open {path} (in use by another program?)"))?;
-    let mut port = port;
-    // CDC-ACM devices on Windows usually stay silent until the host asserts DTR.
     let _ = port.write_data_terminal_ready(true);
     let _ = port.write_request_to_send(true);
     std::thread::sleep(Duration::from_millis(250));

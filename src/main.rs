@@ -16,6 +16,8 @@ mod platform;
 mod proto;
 mod schedule;
 mod settings;
+#[cfg(windows)]
+mod winserial;
 mod worker;
 
 use eframe::egui;
