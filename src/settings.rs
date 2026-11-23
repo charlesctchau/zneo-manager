@@ -83,6 +83,8 @@ pub struct Settings {
     pub crop: bool,
     pub change_on_launch: bool,
     pub last_upload_dir: String,
+    /// Manual COM port such as "COM3"; empty = auto-detect by USB VID/PID.
+    pub port: String,
 }
 
 impl Default for Settings {
@@ -99,6 +101,7 @@ impl Default for Settings {
             crop: true,
             change_on_launch: true,
             last_upload_dir: String::new(),
+            port: String::new(),
         }
     }
 }

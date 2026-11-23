@@ -129,7 +129,8 @@ impl Worker {
             // Cheap hot-plug detection: enumeration only, no device I/O.
             if last_scan.elapsed() >= Duration::from_secs(5) {
                 last_scan = std::time::Instant::now();
-                match device::detect_port() {
+                let ov = self.settings.lock().unwrap().port.clone();
+                match device::resolve_port(&ov) {
                     Ok(port) => {
                         if last_port.as_deref() != Some(port.as_str()) {
                             let st = self.op("Refresh", |w| w.refresh());

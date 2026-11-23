@@ -65,6 +65,38 @@ pub fn detect_port() -> Result<String> {
     bail!("no HM LAB device found (VID {HM_VID:#06x} PID {HM_PID:#06x})")
 }
 
+/// All serial ports as (name, description) for the manual port picker.
+pub fn list_ports() -> Vec<(String, String)> {
+    serialport::available_ports()
+        .unwrap_or_default()
+        .into_iter()
+        .map(|p| {
+            let desc = match &p.port_type {
+                serialport::SerialPortType::UsbPort(u) => format!(
+                    "USB {:04X}:{:04X}{}",
+                    u.vid,
+                    u.pid,
+                    u.product.as_ref().map(|s| format!(" {s}")).unwrap_or_default()
+                ),
+                serialport::SerialPortType::BluetoothPort => "Bluetooth".to_string(),
+                serialport::SerialPortType::PciPort => "PCI".to_string(),
+                serialport::SerialPortType::Unknown => String::new(),
+            };
+            (p.port_name, desc)
+        })
+        .collect()
+}
+
+/// Resolve the port: a manual override (non-empty) or VID/PID auto-detection.
+pub fn resolve_port(override_port: &str) -> Result<String> {
+    let o = override_port.trim();
+    if o.is_empty() {
+        detect_port()
+    } else {
+        Ok(o.to_string())
+    }
+}
+
 pub fn open_serial(path: &str) -> Result<DynDevice> {
     let port = serialport::new(path, SERIAL_BAUD)
         .data_bits(serialport::DataBits::Eight)
@@ -73,12 +105,17 @@ pub fn open_serial(path: &str) -> Result<DynDevice> {
         .timeout(NORMAL_TIMEOUT)
         .open()
         .with_context(|| format!("cannot open {path} (in use by another program?)"))?;
+    let mut port = port;
+    // CDC-ACM devices on Windows usually stay silent until the host asserts DTR.
+    let _ = port.write_data_terminal_ready(true);
+    let _ = port.write_request_to_send(true);
+    std::thread::sleep(Duration::from_millis(250));
     Device::new(Box::new(port) as Box<dyn Transport>)
 }
 
-/// Detect + open in one step.
-pub fn open_auto() -> Result<(String, DynDevice)> {
-    let name = detect_port()?;
+/// Resolve (override or auto-detect) + open in one step.
+pub fn open_port(override_port: &str) -> Result<(String, DynDevice)> {
+    let name = resolve_port(override_port)?;
     let dev = open_serial(&name)?;
     Ok((name, dev))
 }
@@ -135,18 +172,28 @@ impl<T: Transport> Device<T> {
     }
 
     fn handshake(&mut self) -> Result<()> {
-        self.send(&build_handshake())?;
-        for _ in 0..10 {
-            let resp = recv_packet(&mut self.io, NORMAL_TIMEOUT)?;
-            if resp.cmd_id() == CMD_HANDSHAKE {
-                self.info = parse_handshake(&resp)?;
-                if self.info.flash_size == 0 {
-                    bail!("device reported flash size 0 (unexpected handshake data)");
+        let mut last_err = anyhow::anyhow!("no handshake response");
+        for _ in 0..3 {
+            self.send(&build_handshake())?;
+            for _ in 0..10 {
+                match recv_packet(&mut self.io, Duration::from_millis(1500)) {
+                    Ok(resp) if resp.cmd_id() == CMD_HANDSHAKE => {
+                        self.info = parse_handshake(&resp)?;
+                        if self.info.flash_size == 0 {
+                            bail!("device reported flash size 0 (unexpected handshake data)");
+                        }
+                        return Ok(());
+                    }
+                    Ok(_) => {}
+                    Err(e) => {
+                        last_err = e;
+                        let _ = self.io.clear_input();
+                        break;
+                    }
                 }
-                return Ok(());
             }
         }
-        bail!("no handshake response after 10 packets")
+        Err(last_err.context("device did not answer the handshake (wrong COM port, or another program is using it?)"))
     }
 
     pub fn read_config(&mut self) -> Result<DeviceConfig> {

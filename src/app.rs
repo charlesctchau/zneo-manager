@@ -82,6 +82,7 @@ pub struct App {
     autostart_err: Option<String>,
     folder_key: Option<(String, bool)>,
     folder_count: Option<Result<usize, String>>,
+    ports: Vec<(String, String)>,
 }
 
 impl App {
@@ -110,7 +111,13 @@ impl App {
             tx: ev_tx,
             rx: cmd_rx,
             ctx: ctx.clone(),
-            open: Box::new(crate::device::open_auto),
+            open: {
+                let st = shared_settings.clone();
+                Box::new(move || {
+                    let p = st.lock().unwrap().port.clone();
+                    crate::device::open_port(&p)
+                })
+            },
         };
         std::thread::Builder::new()
             .name("device-worker".into())
@@ -172,6 +179,7 @@ impl App {
             autostart_err: None,
             folder_key: None,
             folder_count: None,
+            ports: crate::device::list_ports(),
         };
         // Debug-build only: preload a folder to take UI screenshots.
         #[cfg(debug_assertions)]
@@ -434,7 +442,12 @@ impl App {
                             "{}",
                             t(zh, "Not connected: hub not found (check the USB cable)", "未連線：找不到 Hub（請確認 USB 已接上）")
                         ),
-                        Some(e) => format!("{}: {}", t(zh, "Not connected", "未連線"), first_line(e)),
+                        Some(e) => format!(
+                            "{}: {} {}",
+                            t(zh, "Not connected", "未連線"),
+                            first_line(e),
+                            t(zh, "(see Device tab)", "（可到「裝置設定」選連接埠）")
+                        ),
                         None => t(zh, "Not connected", "未連線").to_string(),
                     },
                 ),
@@ -711,6 +724,29 @@ impl App {
 
     fn page_device(&mut self, ui: &mut egui::Ui, zh: bool) {
         ui.heading(t(zh, "Device", "裝置設定"));
+        ui.horizontal(|ui| {
+            ui.label(t(zh, "COM port:", "COM 連接埠："));
+            let current = if self.cfg.port.is_empty() { t(zh, "Auto-detect", "自動偵測").to_string() } else { self.cfg.port.clone() };
+            egui::ComboBox::from_id_salt("port").selected_text(current).width(300.0).show_ui(ui, |ui| {
+                ui.selectable_value(&mut self.cfg.port, String::new(), t(zh, "Auto-detect", "自動偵測"));
+                for (name, desc) in &self.ports {
+                    ui.selectable_value(&mut self.cfg.port, name.clone(), format!("{name}  {desc}"));
+                }
+            });
+            if ui.button(t(zh, "Rescan ports", "重新掃描")).clicked() {
+                self.ports = crate::device::list_ports();
+            }
+            if ui.add_enabled(self.busy.is_none(), egui::Button::new(t(zh, "Connect", "重新連線"))).clicked() {
+                self.commit_settings();
+                self.send(Cmd::Refresh);
+            }
+        });
+        ui.weak(t(
+            zh,
+            "Auto-detect looks for USB ID C019:0401. If the hub is not answering, try another port from the list.",
+            "自動偵測是找 USB ID C019:0401。若 Hub 沒有回應，可從清單改選其他連接埠。",
+        ));
+        ui.separator();
         let Some(info) = self.status.info.clone() else {
             ui.label(t(zh, "No device connected.", "尚未連線到裝置。"));
             return;
