@@ -1,0 +1,6 @@
+Z-NEO Manager is licensed AGPL-3.0-or-later.
+Its device protocol implementation is derived from hm-hub by Creationsss
+(https://github.com/Creationsss/hm-hub), AGPL-3.0-or-later.
+GUI built with egui/eframe (MIT/Apache-2.0); other Rust crate licenses apply
+(see each crate's license, e.g. via `cargo license`).
+Not affiliated with HM LAB.
