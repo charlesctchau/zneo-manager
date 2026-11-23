@@ -371,7 +371,7 @@ impl eframe::App for App {
         }
 
         if ctx.input(|i| i.viewport().close_requested()) && !self.quitting {
-            if self.cfg.minimize_to_tray && self.tray.is_some() {
+            if self.cfg.minimize_to_tray && self.cfg.auto_enabled && self.tray.is_some() {
                 ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
                 ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
             } else if self.busy.is_some() {
@@ -448,6 +448,12 @@ impl App {
                 _ => (
                     Color32::from_rgb(220, 90, 90),
                     match &self.status.error {
+                        Some(e) if e.contains("in use by another program") => t(
+                            zh,
+                            "COM port is in use by another program (close hmlab.tech tabs / other HM software)",
+                            "COM 埠被其他程式占用（請關閉瀏覽器的 hmlab.tech 分頁或其他 HM 軟體）",
+                        )
+                        .to_string(),
                         Some(e) if e.starts_with("no HM LAB device") => format!(
                             "{}",
                             t(zh, "Not connected: hub not found (check the USB cable)", "未連線：找不到 Hub（請確認 USB 已接上）")
@@ -589,7 +595,7 @@ impl App {
         }
         ui.checkbox(
             &mut self.cfg.minimize_to_tray,
-            t(zh, "Close button hides to the system tray", "按關閉鈕時縮到系統匣（不結束）"),
+            t(zh, "When automatic change is on, the close button hides to the tray (otherwise it quits)", "自動換圖開啟時，按關閉鈕縮到系統匣常駐（未開啟時直接結束）"),
         );
         ui.horizontal(|ui| {
             ui.label(t(zh, "Language:", "語言："));

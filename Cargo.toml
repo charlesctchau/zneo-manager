@@ -1,6 +1,6 @@
 [package]
 name = "zneo-manager"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 description = "Portable Windows manager for the HM LAB Z-NEO 8K USB hub LCD"
 license = "AGPL-3.0-or-later"

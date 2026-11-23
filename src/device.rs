@@ -236,7 +236,13 @@ pub fn diagnose(path: &str) -> Vec<String> {
 #[cfg(windows)]
 pub fn open_serial(path: &str) -> Result<DynDevice> {
     let port = crate::winserial::RawPort::open(path, SERIAL_BAUD, crate::winserial::Mode::ChromeLike, NORMAL_TIMEOUT)
-        .with_context(|| format!("cannot open {path} (in use by another program?)"))?;
+        .map_err(|e| match e.raw_os_error() {
+            // ERROR_ACCESS_DENIED: another process owns the port exclusively.
+            Some(5) => anyhow::anyhow!("{path} is in use by another program (access denied)"),
+            // ERROR_FILE_NOT_FOUND: the port vanished (device re-enumerating / unplugged).
+            Some(2) => anyhow::anyhow!("{path} disappeared (device re-connecting)"),
+            _ => anyhow::anyhow!("cannot open {path}: {e}"),
+        })?;
     // Chrome sends the first packet ~100 ms after opening.
     std::thread::sleep(Duration::from_millis(100));
     Device::new(Box::new(port) as Box<dyn Transport>)
