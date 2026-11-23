@@ -32,6 +32,7 @@ pub enum Cmd {
     Upload { paths: Vec<PathBuf>, crop: bool },
     ChangeNow,
     ApplyConfig(ConfigEdit),
+    Diagnose,
     Backup(PathBuf),
     Restore(PathBuf),
     Quit,
@@ -110,6 +111,19 @@ impl Worker {
                 Ok(Cmd::ApplyConfig(edit)) => {
                     self.op("Apply settings", |w| w.apply_config(edit));
                     last_port = self.op("Refresh", |w| w.refresh()).and_then(|s| s.port);
+                }
+                Ok(Cmd::Diagnose) => {
+                    self.op("Diagnostics", |w| {
+                        let ov = w.settings.lock().unwrap().port.clone();
+                        let port = device::resolve_port(&ov)?;
+                        for line in device::diagnose(&port) {
+                            w.log.info(line);
+                        }
+                        w.log.info("Diagnostics finished");
+                        Ok(())
+                    });
+                    last_port = None;
+                    last_scan = std::time::Instant::now() - Duration::from_secs(60);
                 }
                 Ok(Cmd::Backup(path)) => {
                     self.op("Backup", |w| w.backup(&path));

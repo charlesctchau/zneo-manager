@@ -741,6 +741,11 @@ impl App {
                 self.send(Cmd::Refresh);
             }
         });
+        if ui.add_enabled(self.busy.is_none(), egui::Button::new(t(zh, "Run connection diagnostics (~25 s)", "執行連線診斷（約 25 秒）"))).clicked() {
+            self.commit_settings();
+            self.send(Cmd::Diagnose);
+            self.page = Page::Log;
+        }
         ui.weak(t(
             zh,
             "Auto-detect looks for USB ID C019:0401. If the hub is not answering, try another port from the list.",

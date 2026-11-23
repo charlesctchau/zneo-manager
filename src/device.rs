@@ -97,6 +97,69 @@ pub fn resolve_port(override_port: &str) -> Result<String> {
     }
 }
 
+fn hex(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect::<Vec<_>>().join(" ")
+}
+
+/// Raw-capture diagnostics: try several line settings and report exactly which
+/// bytes the port returns. Returns one report line per attempt.
+pub fn diagnose(path: &str) -> Vec<String> {
+    // (dtr, rts, send handshake first)
+    let variants = [
+        (true, true, false),
+        (true, true, true),
+        (false, false, true),
+        (true, false, true),
+        (false, true, true),
+    ];
+    let mut out = vec![format!("Diagnostics on {path} (115200 8N1)")];
+    for (dtr, rts, send) in variants {
+        let label = format!("DTR={} RTS={} {}", dtr as u8, rts as u8, if send { "send-handshake" } else { "listen-only" });
+        let mut port = match serialport::new(path, SERIAL_BAUD).timeout(Duration::from_millis(200)).open() {
+            Ok(p) => p,
+            Err(e) => {
+                out.push(format!("{label}: cannot open: {e}"));
+                std::thread::sleep(Duration::from_secs(2));
+                continue;
+            }
+        };
+        let _ = port.write_data_terminal_ready(dtr);
+        let _ = port.write_request_to_send(rts);
+        std::thread::sleep(Duration::from_millis(400));
+        let _ = port.clear(serialport::ClearBuffer::Input);
+        let mut wrote = String::from("-");
+        if send {
+            wrote = match port.write_all(&build_handshake().buf).and_then(|_| port.flush()) {
+                Ok(()) => "256 bytes written".into(),
+                Err(e) => format!("write failed: {e}"),
+            };
+        }
+        let mut got = Vec::new();
+        let end = Instant::now() + Duration::from_secs(3);
+        let mut buf = [0u8; 512];
+        while Instant::now() < end && got.len() < 1024 {
+            match port.read(&mut buf) {
+                Ok(0) => {}
+                Ok(n) => got.extend_from_slice(&buf[..n]),
+                Err(e) if e.kind() == io::ErrorKind::TimedOut => {}
+                Err(e) => {
+                    out.push(format!("{label}: read error: {e}"));
+                    break;
+                }
+            }
+        }
+        let valid = got.len() >= PACKET_SIZE && Packet::from_bytes(got[..PACKET_SIZE].try_into().unwrap()).is_ok();
+        out.push(format!(
+            "{label}: {wrote}; received {} bytes; valid packet: {valid}; first bytes: {}",
+            got.len(),
+            hex(&got[..got.len().min(40)])
+        ));
+        drop(port);
+        std::thread::sleep(Duration::from_millis(1200));
+    }
+    out
+}
+
 pub fn open_serial(path: &str) -> Result<DynDevice> {
     let port = serialport::new(path, SERIAL_BAUD)
         .data_bits(serialport::DataBits::Eight)
