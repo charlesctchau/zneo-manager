@@ -4,7 +4,11 @@ Portable Windows manager for the HM LAB Z-NEO 8K USB hub LCD (320x170).
 Automatic picture rotation from a folder, manual upload with exact preview,
 device settings, backup/restore, system tray, start with Windows.
 
-Status: protocol verified only against a mock device; not yet tested on real hardware.
+Status: tested on a real Z-NEO 8K (firmware 1.3.7) for connection, manual upload,
+GIF upload and automatic picture change. Other firmware versions are untested.
+
+Important: a COM port can only be opened by one program at a time. Close any browser tab
+with hmlab.tech (Web Serial keeps the port even in the background) while using this app.
 
 ## Build (Windows target from Linux)
 
