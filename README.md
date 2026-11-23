@@ -1,4 +1,6 @@
+
 # Z-NEO Manager
+<img width="997" height="822" alt="Clipboarder 2026 11 23-002" src="https://github.com/user-attachments/assets/845e4aac-5a84-4f99-ab8e-602ac848a446" />
 
 Portable Windows manager for the HM LAB Z-NEO 8K USB hub LCD (320x170).
 Automatic picture rotation from a folder, manual upload with exact preview,
