@@ -35,6 +35,12 @@ fn main() -> eframe::Result {
     }
 
     let log = Arc::new(settings::Logger::new(paths.log_file()));
+    log.info("launching");
+    {
+        // Windows GUI builds have no console: record panics in the log file instead.
+        let l = log.clone();
+        std::panic::set_hook(Box::new(move |info| l.error(format!("panic: {info}"))));
+    }
     let start_hidden = std::env::args().any(|a| a == "--minimized");
 
     let (rgba, w, h) = platform::icon_rgba();
@@ -45,12 +51,16 @@ fn main() -> eframe::Result {
         .with_icon(egui::IconData { rgba, width: w, height: h })
         .with_visible(!start_hidden);
 
+    let app_log = log.clone();
     let options = eframe::NativeOptions { viewport, ..Default::default() };
     let result = eframe::run_native(
         "Z-NEO Manager",
         options,
-        Box::new(move |cc| Ok(Box::new(app::App::new(cc, paths, log, start_hidden)))),
+        Box::new(move |cc| Ok(Box::new(app::App::new(cc, paths, app_log, start_hidden)))),
     );
     drop(guard);
+    if let Err(e) = &result {
+        log.error(format!("window/graphics start failed: {e}"));
+    }
     result
 }

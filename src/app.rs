@@ -66,6 +66,9 @@ pub struct App {
     progress: Option<(u64, u64)>,
     quitting: bool,
     quit_confirm: bool,
+    /// Remaining attempts to bring a hidden window to the front (commands sent while
+    /// hidden can need a further event-loop pass before they take effect).
+    show_pending: u8,
 
     upload_list: Vec<PathBuf>,
     selected: Option<usize>,
@@ -167,6 +170,7 @@ impl App {
             progress: None,
             quitting: false,
             quit_confirm: false,
+            show_pending: 0,
             upload_list: Vec::new(),
             selected: None,
             preview: None,
@@ -233,12 +237,12 @@ impl App {
                     self.busy = b;
                 }
                 Event::Progress(d, tot) => self.progress = Some((d, tot)),
-                Event::ShowWindow => self.show_window(ctx),
+                Event::ShowWindow => self.show_pending = 6,
             }
         }
         while let Ok(m) = self.ui_rx.try_recv() {
             match m {
-                UiMsg::Tray(TrayCmd::Show) => self.show_window(ctx),
+                UiMsg::Tray(TrayCmd::Show) => self.show_pending = 6,
                 UiMsg::Tray(TrayCmd::ChangeNow) => self.send(Cmd::ChangeNow),
                 UiMsg::Tray(TrayCmd::Quit) => self.request_quit(ctx),
                 UiMsg::FolderPicked(p) => self.cfg.folder = p.display().to_string(),
@@ -359,6 +363,12 @@ impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.drain(ctx);
         self.commit_settings();
+        if self.show_pending > 0 {
+            self.show_pending -= 1;
+            self.show_window(ctx);
+            // Keep the event loop turning until the window is really visible.
+            ctx.request_repaint();
+        }
 
         if ctx.input(|i| i.viewport().close_requested()) && !self.quitting {
             if self.cfg.minimize_to_tray && self.tray.is_some() {

@@ -137,7 +137,10 @@ impl Worker {
 
             // A second launched instance asks this one to show its window.
             if std::fs::remove_file(self.paths.show_request_file()).is_ok() {
-                self.emit(Event::ShowWindow);
+                for _ in 0..4 {
+                    self.emit(Event::ShowWindow);
+                    std::thread::sleep(Duration::from_millis(250));
+                }
             }
 
             // Cheap hot-plug detection: enumeration only, no device I/O.
